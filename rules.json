@@ -138,6 +138,7 @@
 			"company_domain": "pinknetworks.com",
 			"configs": [
 				[ "pink-syd-edge", "router" ],
+				[ "pink-syd-edge-backup", "router" ],
 				[ "pink-syd-sv-dc1.gold.pinknet", "server" ],
 				[ "pink-syd-sv-dc2.gold.pinknet", "server" ],
 				[ "pink-syd-sv-ts1.gold.pinknet", "server" ],

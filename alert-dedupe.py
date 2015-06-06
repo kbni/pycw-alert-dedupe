@@ -28,15 +28,19 @@ class AlertDedupe(pycw.Scaffold):
 	status_close = 'Closed (dedupe)'
 	status_reopen = 'Reopen (dedupe)'
 	fake_receiver = 'alerts@example.com'
+	config_not_matched = 'Could not find the config..'
 	last_ticket = None
 
 	def __init__(self):
 		pycw.Scaffold.__init__(self)
+		self.add_argument('--loop', action='store_true', dest='loop')
+		self.add_argument('--once', action='store_true', dest='once')
 		self.add_argument('--test-shell', action='store_true', dest='test_shell')
 		self.add_argument('--rules-file', action='store', dest='rules_file', default='./rules.json')
 		self.add_argument('--data-file', action='store', dest='data_file', default='./history.db')
 		self.add_argument('--debug-rules', action='store_true', dest='debug_rules')
 		self.add_argument('--debug-regex', action='store_true', dest='debug_regex')
+		self.add_argument('--debug-sql', action='store_true', dest='debug_sql')
 		self.add_argument('--test-search-configs', action='store_true', dest='test_search_configs')
 		self.add_argument('--create-test-tickets', action='store_true', dest='create_test_tickets')
 
@@ -55,75 +59,83 @@ class AlertDedupe(pycw.Scaffold):
 			self.create_test_tickets()
 		self.test_emails = None
 
-		while True:
-			for ticket in self.search_tickets():
-				self.last_ticket = ticket
-				ret_vars = self.find_rule(ticket)
+		while self.args.loop:
+			self.check_board()
 
-				if ret_vars and ret_vars.has_key('rule'):
-					rule = ret_vars['rule']
-					orig_ticket = ret_vars['ticket']
-					company = ret_vars['company'].CompanyIdentifier
+		if self.args.once:
+			self.check_board()
 
-					use_ticket = None
-					original_dedupe = self.sql_find_original(rule, ret_vars)
+	def check_board(self):
+		for ticket in self.search_tickets():
+			self.last_ticket = ticket
+			ret_vars = self.find_rule(ticket)
 
-					if original_dedupe:
+			if ret_vars and ret_vars.has_key('rule'):
+				if not ret_vars.has_key('company'):
+					self.info('No company detected for %s (configurations not matching?)' % ticket)
+					continue
+
+				rule = ret_vars['rule']
+				orig_ticket = ret_vars['ticket']
+				company = ret_vars['company'].CompanyIdentifier
+
+				use_ticket = None
+				original_dedupe = self.sql_find_original(rule, ret_vars)
+
+				if original_dedupe:
+					try:
+						use_ticket = self.cw.ServiceTicket(original_dedupe)
+					except pycw.CWObjectNotFound:
+						self.warning('Stale ticket #%s in history - ticket deleted?' % original_dedupe)
+
+					if use_ticket and use_ticket.ClosedFlag:
+						if rule.reopen_tickets:
+							use_ticket.data.StatusName = ret_vars.get('status_reopen', rule.status_reopen)
+							self.debug('Reopening %s (status: %s)' % (use_ticket, use_ticket.data.StatusName))
+						else:
+							self.debug('Not reopening existing ticket %s' % use_ticket)
+							use_ticket = None
+
+				if not use_ticket:
+					use_ticket = self.cw.ServiceTicket()
+					use_ticket.data.Board = ret_vars.get('service_board', orig_ticket.Board)
+					use_ticket.data.CompanyId = int(ret_vars['company'].record_id)
+					use_ticket.data.CompanyIdentifier = ret_vars['company'].CompanyIdentifier
+					use_ticket.data.StatusName = ret_vars.get('status_new', rule.status_new)
+
+					new_summary = rule.new_ticket_summary
+					for try_eval in re.findall('\\${(.+?)}', new_summary):
 						try:
-							use_ticket = self.cw.ServiceTicket(original_dedupe)
-						except pycw.CWObjectNotFound:
-							self.warning('Stale ticket #%s in history - ticket deleted?' % original_dedupe)
+							new_summary = new_summary.replace('${%s}'%try_eval, eval(try_eval, None, ret_vars))
+						except:
+							self.error('Eval error: %s' % try_eval)
+							continue
+					use_ticket.data.Summary = new_summary
 
-						if use_ticket and use_ticket.ClosedFlag:
-							if rule.reopen_tickets:
-								use_ticket.data.StatusName = ret_vars.get('status_reopen', rule.status_reopen)
-								self.debug('Reopening %s (status: %s)' % (use_ticket, use_ticket.data.StatusName))
-							else:
-								self.debug('Not reopening existing ticket %s' % use_ticket)
-								use_ticket = None
+				for config in ret_vars['configs']:
+					use_ticket.assoc_configuration(config)
+					
+				use_ticket.save()
 
-					if not use_ticket:
-						use_ticket = self.cw.ServiceTicket()
-						use_ticket.data.Board = ret_vars.get('service_board', orig_ticket.Board)
-						use_ticket.data.CompanyId = int(ret_vars['company'].record_id)
-						use_ticket.data.CompanyIdentifier = ret_vars['company'].CompanyIdentifier
-						use_ticket.data.StatusName = ret_vars.get('status_new', rule.status_new)
+				orig_ticket.data.StatusName = ret_vars.get('status_close', rule.status_close)
+				orig_ticket.save()
+				self.debug('Closing %s (status: %s)' % (orig_ticket, orig_ticket.data.StatusName))
 
-						new_summary = rule.new_ticket_summary
-						for try_eval in re.findall('\\${(.+?)}', new_summary):
-							try:
-								new_summary = new_summary.replace('${%s}'%try_eval, eval(try_eval, None, ret_vars))
-							except:
-								self.error('Eval error: %s' % try_eval)
-								continue
-						use_ticket.data.Summary = new_summary
+				note = self.cw.TicketNote(parent=orig_ticket)
+				note.data.NoteText = 'Ticket closed, please refer:\n#%06d - %s' % ( use_ticket.record_id, use_ticket.Summary )
+				note.data.DateCreated = datetime.datetime.now().isoformat()
+				note.data.IsInternalNote = False
+				note.data.IsExternalNote = True
+				note.data.IsPartOfDetailDescription = True
+				note.data.IsPartOfInternalAnalysis = False
+				note.data.IsPartOfResolution = False
+				note.save()
 
-					for config in ret_vars['configs']:
-						use_ticket.assoc_configuration(config)
-						
-					use_ticket.save()
-
-					orig_ticket.data.StatusName = ret_vars.get('status_close', rule.status_close)
-					orig_ticket.save()
-					self.debug('Closing %s (status: %s)' % (orig_ticket, orig_ticket.data.StatusName))
-
-					note = self.cw.TicketNote(parent=orig_ticket)
-					note.data.NoteText = 'Ticket closed, please refer:\n#%06d - %s' % ( use_ticket.record_id, use_ticket.Summary )
-					note.data.DateCreated = datetime.datetime.now().isoformat()
-					note.data.IsInternalNote = False
-					note.data.IsExternalNote = True
-					note.data.IsPartOfDetailDescription = True
-					note.data.IsPartOfInternalAnalysis = False
-					note.data.IsPartOfResolution = False
-					note.save()
-
-					self.sql_store_original(
-						orig_ticket.EnteredDate, orig_ticket.record_id, orig_ticket.Summary,
-						use_ticket.record_id, use_ticket.Summary,
-						ret_vars['company'].record_id, rule.rule_id, rule.subject_id
-					)
-
-			time.sleep(10)
+				self.sql_store_original(
+					orig_ticket.EnteredDate, orig_ticket.record_id, orig_ticket.Summary,
+					use_ticket.record_id, use_ticket.Summary,
+					ret_vars['company'].record_id, rule.rule_id, rule.subject_id
+				)
 
 
 	def sql_create_table(self):
@@ -146,7 +158,8 @@ class AlertDedupe(pycw.Scaffold):
 	def sql_store_original(self, ts, orig_ticket_id, orig_ticket_summary, new_ticket_id, new_ticket_summary, company_id, rule_id, subject_id):
 		args = ts, orig_ticket_id, new_ticket_id, orig_ticket_summary, new_ticket_summary, company_id, rule_id, subject_id
 		sql_query = "INSERT INTO history (ts, orig_ticket_id, new_ticket_id, orig_ticket_summary, new_ticket_summary, company_id, rule_id, subject_id) VALUES (%s)" % ','.join(['?']*len(args))
-		self.debug('%s %s' % (sql_query, args))
+		if self.args.debug_sql:
+			self.debug('%s %s' % (sql_query, args))
 		curs = self.dbconn.cursor()
 		curs.execute(sql_query, args)
 		self.dbconn.commit()
@@ -178,7 +191,9 @@ class AlertDedupe(pycw.Scaffold):
 
 		sql_query = "SELECT new_ticket_id FROM history WHERE %s ORDER BY ts DESC" % ' AND '.join(conditions)
 
-		self.debug('sql_find_original: %s' % sql_query)
+		if self.args.debug_sql:
+			self.debug('sql_find_original: %s' % sql_query)
+
 		for row in curs.execute(sql_query):
 			return row[0]
 
@@ -312,8 +327,9 @@ class AlertDedupe(pycw.Scaffold):
 					else:
 						self.error('Unable to resolve config_name: %s' % config_name)
 
-				ret_vars['configs'] = configs
-				ret_vars['company'] = self.cw.Company(configs[0].CompanyId)
+				if configs:
+					ret_vars['configs'] = configs
+					ret_vars['company'] = self.cw.Company(configs[0].CompanyId)
 				ret_vars['ticket'] = test_object
 
 			return ret_vars # We've located our rule, return
