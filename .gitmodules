@@ -1,0 +1,6 @@
+[submodule "pycw"]
+	path = pycw
+	url = ../pycw
+[submodule "gluino"]
+	path = gluino
+	url = https://github.com/mdipierro/gluino.git

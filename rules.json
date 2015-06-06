@@ -1,0 +1,178 @@
+{
+	"macros": {
+		"_prepend_summary_match": { "re": "(\\{(Spam|Disarmed)\\??\\} |)" },
+		"SOMEBYTES": { "re": "(?P<total_bytes>\\d+[KMGTP]i?B)", "test_strings": [ "500GB", "1mb", "6KiB" ] },
+		"PERIOD": { "re": "(?P<period>(minute|hour|day|week|month))", "test_strings": [ "Month", "week", "DAY" ] },
+		"CONFIG_NAME": { "re": "\\[?(?P<config_name>([\\.\\w_-]+))\\]?", "test_strings": [ "abc-nas1", "abc-sv-dc01", "[xyz-sv-ts01]" ] },
+		"KASEYA_GROUP": { "re": "(?P<kaseya_group>[\\.\\w_-]+)" },
+		"RAID_STATUS": { "re": "(?P<raid_status>(OPTIMAL|DEGRADED|REBUILDING|[\\w-]+))", "test_strings": [ "OPTIMAL", "DEGRADED" ] },
+		"INTERFACE_NAME": { "re": "(?P<interface_name>(LAN|WAN|PPP|ETH|EN|ETH)(\\d+:\\d+|\\d+))", "test_strings": [ "LAN1", "WAN2", "eth0", "eth0:1" ] },
+		"N": { "re": "(?P<n>\\d+)", "test_strings": [ "50", "1000", "6" ] },
+		"on": { "re": "(in|on)" },
+		"onfor": { "re": "(in|on|for)" }
+	},
+	"options": {
+		"search_boards": [ "Testing/Alerts" ],
+		"search_status": [ "New", "SilentNew" ],
+		"search_limit": 15,
+		"date_crit": "within-month",
+		"reopen_tickets": 1,
+		"include_previous": 30,
+		"status_new": "New (dedupe)",
+		"status_close": "Closed (dedupe)",
+		"status_reopen": "Reopened (dedupe)",
+		"config_not_matched": "Configuration %s not matched - not processed by alert-dedupe."
+	},
+	"rules": [
+		{
+			"name": "storage+backups",
+			"new_ticket_summary": "Monitoring / Storage + backups / ${company.CompanyName}",
+			"date_crit": "same-quarter",
+			"subjects": [
+				{
+					"name": "generic-backup-has-failed",
+					"match_ticket_summary": "Backup has failed %onfor% %CONFIG_NAME%",
+					"test_emails": [{
+						"subject": "Backup has failed for $random_server",
+						"sender": "noreply@$company_domain",
+						"body": "The destination object is not accessible"
+					},
+					{
+						"subject": "Backup has failed for $random_workstation",
+						"sender": "noreply@$company_domain",
+						"body": "The destination object is not accessible"
+					}]
+				},
+				{
+					"name": "generic-disk-has-failed",
+					"match_ticket_summary": "Array %N% in %RAID_STATUS% state %on% %CONFIG_NAME%",
+					"test_emails": [{
+						"subject": "Array 0 in DEGRADED state on $random_server",
+						"sender": "noreply@prtg.$company_domain",
+						"body": "Array 0 in DEGRADED state on $random_server"
+					}]
+				},
+				{
+					"name": "generic-running-out-of-space",
+					"match_ticket_summary": "Disk is running out of space %on% %CONFIG_NAME%",
+					"test_emails": [{
+						"subject": "Disk is running out of space on $random_server",
+						"sender": "alerts@$random_server.$company_domain",
+						"body": "C: is too full, seriously there's not much space left!"
+					}]
+				}
+			]
+		},
+		{
+			"name": "server-monitoring",
+			"new_ticket_summary": "Monitoring / Server Operations / ${company.CompanyName}",
+			"date_crit": "within-month",
+			"subjects": [
+				{
+					"name": "generic-system-is-offline",
+					"match_ticket_summary": "System is offline: %CONFIG_NAME%",
+					"test_emails": [{
+						"subject": "System is offline: $random_server",
+						"sender": "noreply@monitoring.$company_domain",
+						"body": "The system is offline (has not checked in for 6 minutes)."
+					}]
+				},
+				{
+					"name": "generic-system-is-online",
+					"match_ticket_summary": "System is online: %CONFIG_NAME%",
+					"test_emails": [{
+						"subject": "System is online: $random_server",
+						"sender": "noreply@monitoring.$company_domain",
+						"body": "The system is now online."
+					}]
+				},
+				{
+					"name": "generic-systems-are-offline",
+					"match_ticket_summary": "The following systems in the %KASEYA_GROUP% group have not checked in",
+					"config_per_line": "%CONFIG_NAME%",
+					"test_emails": [{
+						"subject": "The following systems in the $company_domain group have not checked in",
+						"sender": "noreply@monitoring.$company_domain",
+						"body": "The following systems have not checked in recently:\n\n$random_server\n$random_server\n$random_server"
+					}]
+				}
+			]
+		},
+		{
+			"name": "cpe-link-down",
+			"new_ticket_summary": "A link has gone down at ${company.CompanyName}",
+			"date_crit": "within-month",
+			"subjects": [
+				{
+					"name": "generic-router-interface-offline",
+					"match_ticket_summary": "%CONFIG_NAME% %INTERFACE_NAME% Interface offline",
+					"test_emails": [{
+						"subject": "$random_router WAN2 Interface offline",
+						"sender": "noreply@$random_router.$company_domain",
+						"body": "The interface WAN2 has been detected as being offline"
+					}]
+				}
+			]
+		},
+		{
+			"name": "cpe-traffic-alert",
+			"new_ticket_summary": "Traffic alert at ${company.CompanyName}",
+			"date_crit": "within-month",
+			"subjects": [
+				{
+					"name": "generic-traffic-exceeed-threshold",
+					"match_ticket_summary": "%CONFIG_NAME% %INTERFACE_NAME% usage exceeds %SOMEBYTES% in past %PERIOD%",
+					"test_emails": [{
+						"subject": "[$random_router] WAN2 usage exceeds 425GB in past month",
+						"sender": "noreply@$random_router.$company_domain",
+						"body": "The total throughput in the past 30 days has exceed 425GB for the WAN2 interface."
+					}]
+				}
+			]
+		}
+	],
+	"test_companies": [
+		{
+			"company_name": "PinkNetworks, L.L.C.",
+			"company_id": "PinkNetworksLLC",
+			"company_domain": "pinknetworks.com",
+			"configs": [
+				[ "pink-syd-edge", "router" ],
+				[ "pink-syd-sv-dc1.gold.pinknet", "server" ],
+				[ "pink-syd-sv-dc2.gold.pinknet", "server" ],
+				[ "pink-syd-sv-ts1.gold.pinknet", "server" ],
+				[ "pink-syd-sv-ts2.gold.pinknet", "server" ],
+				[ "pink-syd-ws-01-reception.silver.pinknet", "workstation" ],
+				[ "pink-syd-ws-02.silver.pinknet", "workstation" ],
+				[ "pink-syd-ws-03-manager.gold.pinknet", "workstation" ],
+				[ "pink-syd-ws-04.silver.pinknet", "workstation" ],
+				[ "pink-syd-ws-05.silver.pinknet", "workstation" ],
+				[ "pink-syd-ws-06.silver.pinknet", "workstation" ],
+				[ "pink-syd-ws-07.silver.pinknet", "workstation" ]
+			]
+		},
+		{
+			"company_name": "Yellow Systems, L.L.C.",
+			"company_id": "YellowSystemsLLC",
+			"company_domain": "yellowsystemsllc",
+			"configs": [
+				[ "yell-edge", "router" ],
+				[ "yell-sv-dc1.gold.yellowsystems", "server" ],
+				[ "yell-sv-ts1.gold.yellowsystems", "server" ],
+				[ "yell-sv-dev01.gold.yellowsystems", "server" ],
+				[ "yell-sv-app01-cw.gold.yellowsystems", "server" ],
+				[ "yell-sv-app01-int.gold.yellowsystems", "server" ],
+				[ "yell-sv-app02-int.gold.yellowsystems", "server" ],
+				[ "yell-ws-01.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-02.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-03.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-04.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-05.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-06.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-07.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-08.silver.yellowsystems", "workstation" ],
+				[ "yell-ws-09.silver.yellowsystems", "workstation" ]
+			]
+		}
+	]
+}
