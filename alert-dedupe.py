@@ -61,6 +61,7 @@ class AlertDedupe(pycw.Scaffold):
 
 		while self.args.loop:
 			self.check_board()
+			time.sleep(10)
 
 		if self.args.once:
 			self.check_board()
@@ -121,6 +122,19 @@ class AlertDedupe(pycw.Scaffold):
 				orig_ticket.save()
 				self.debug('Closing %s (status: %s)' % (orig_ticket, orig_ticket.data.StatusName))
 
+
+				use_note = use_ticket.first_internal_note()
+				if not use_note:
+					use_note = self.cw.TicketNote(parent=use_ticket)
+					use_note.data.NoteText = 'Watch this space!'
+					use_note.data.DateCreated = datetime.datetime.utcnow().isoformat()
+					use_note.data.IsInternalNote = True
+					use_note.data.IsExternalNote = False
+					use_note.data.IsPartOfDetailDescription = False
+					use_note.data.IsPartOfInternalAnalysis = True
+					use_note.data.IsPartOfResolution = False
+					use_note.save()
+
 				note = self.cw.TicketNote(parent=orig_ticket)
 				note.data.NoteText = 'Ticket closed, please refer:\n#%06d - %s' % ( use_ticket.record_id, use_ticket.Summary )
 				note.data.DateCreated = datetime.datetime.now().isoformat()
@@ -137,6 +151,8 @@ class AlertDedupe(pycw.Scaffold):
 					ret_vars['company'].record_id, rule.rule_id, rule.subject_id
 				)
 
+				use_note.data.NoteText = self.sql_generate_history(use_ticket.record_id)
+				use_note.save()
 
 	def sql_create_table(self):
 		curs = self.dbconn.cursor()
@@ -154,6 +170,28 @@ class AlertDedupe(pycw.Scaffold):
 		"""
 
 		curs.execute(create_history_table)
+
+	def sql_generate_history(self, new_ticket_id):
+		curs = self.dbconn.cursor()
+
+		search1 = "SELECT ts, orig_ticket_id, orig_ticket_summary, rule_id, company_id FROM history WHERE new_ticket_id = ? ORDER BY ts DESC"
+		search2 = "SELECT ts, orig_ticket_id, orig_ticket_summary, new_ticket_id FROM history WHERE company_id = ? AND rule_id = ? ORDER BY ts DESC LIMIT %d" % self.include_previous
+
+		history = '-- Reference tickets: --'
+		for row in curs.execute(search1, (new_ticket_id,)):
+			ts, orig_ticket_id, orig_ticket_summary, rule_id, company_id = row
+			history += '\n[%s] #%06d %s' % ( ts.split('.')[0][0:-3], orig_ticket_id, orig_ticket_summary )
+
+		history += '\n\n-- Previous tickets: --'
+		has_history = True
+		for row in curs.execute(search2, (company_id, rule_id)):
+			has_history = True
+			ts, orig_ticket_id, orig_ticket_summary, new_ticket_id = row
+			history += '\n[%s] #%06d #%06d %s' % ( ts.split('.')[0][0:-3], new_ticket_id, orig_ticket_id, orig_ticket_summary )
+
+		if not has_history:
+			history += '\nNo older tickets.'
+		return history
 
 	def sql_store_original(self, ts, orig_ticket_id, orig_ticket_summary, new_ticket_id, new_ticket_summary, company_id, rule_id, subject_id):
 		args = ts, orig_ticket_id, new_ticket_id, orig_ticket_summary, new_ticket_summary, company_id, rule_id, subject_id
