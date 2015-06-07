@@ -143,6 +143,7 @@ class AlertDedupe(pycw.Scaffold):
 				note.data.IsPartOfDetailDescription = True
 				note.data.IsPartOfInternalAnalysis = False
 				note.data.IsPartOfResolution = False
+				note.data.NoteText = note.data.NoteText.strip().decode('utf8') # hackiness for unicode stuffs
 				note.save()
 
 				self.sql_store_original(
@@ -152,6 +153,7 @@ class AlertDedupe(pycw.Scaffold):
 				)
 
 				use_note.data.NoteText = self.sql_generate_history(use_ticket.record_id)
+				use_note.data.NoteText = use_note.data.NoteText.strip().decode('utf8') # hackiness for unicode stuffs
 				use_note.save()
 
 	def sql_create_table(self):
@@ -211,14 +213,16 @@ class AlertDedupe(pycw.Scaffold):
 		]
 
 		func_map = {
+			'same-day': dateranges.datetime_day_range,
 			'same-week': dateranges.datetime_week_range,
 			'same-month': dateranges.datetime_month_range,
 			'same-quarter': dateranges.datetime_quarter_range,
 			'same-year': dateranges.datetime_year_range,
-			'within-week': dateranges.datetime_week_range,
-			'within-month': dateranges.datetime_month_range,
-			'within-quarter': dateranges.datetime_quarter_range,
-			'within-year': dateranges.datetime_year_range
+			'within-day': dateranges.datetime_day_within,
+			'within-week': dateranges.datetime_week_within,
+			'within-month': dateranges.datetime_month_within,
+			'within-quarter': dateranges.datetime_quarter_within,
+			'within-year': dateranges.datetime_year_within
 		}
 
 		for date_crit, func in func_map.iteritems():

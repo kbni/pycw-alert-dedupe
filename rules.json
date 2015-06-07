@@ -66,7 +66,7 @@
 		{
 			"name": "server-monitoring",
 			"new_ticket_summary": "Monitoring / Server Operations / ${company.CompanyName}",
-			"date_crit": "within-month",
+			"date_crit": "same-day",
 			"subjects": [
 				{
 					"name": "generic-system-is-offline",
